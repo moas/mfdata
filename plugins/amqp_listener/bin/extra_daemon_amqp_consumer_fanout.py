@@ -40,7 +40,7 @@ class ExtraDaemonAmqpConsumerFanout(ExtraDaemonAmqpListener):
             exchange=self.args.subscription_exchange,
         )
         self.info(
-            " [*] Waiting for %s on queue %s. To exit press CTRL+C"
+            " [*] Waiting for %s on queue %s"
             % (self.args.subscription_exchange, self.args.subscription_queue)
         )
         self.channel.basic_consume(

@@ -2,9 +2,12 @@ from acquisition.utils import MFMODULE_RUNTIME_HOME
 from acquisition.utils import _set_custom_environment
 from acquisition.utils import _get_tmp_filepath
 from acquisition.utils import _make_config_file_parser_class
+from mfutil import get_unique_hexa_identifier
+from acquisition.utils import _get_current_utc_datetime_with_ms
 import re
 import os
 import sys
+import six
 import mflog
 import traceback
 import configargparse
@@ -278,3 +281,71 @@ class AcquisitionBase(object):
     def _get_counter_tag_value(self, xaf, not_found_value="0"):
         tag_name = self._get_tag_name("step_counter", force_plugin_name="core")
         return int(xaf.tags.get(tag_name, not_found_value))
+
+    def __increment_and_set_counter_tag_value(self, xaf):
+        tag_name = self._get_tag_name("step_counter", force_plugin_name="core")
+        counter_value = self._get_counter_tag_value(xaf, not_found_value="-1")
+        value = six.b("%i" % (counter_value + 1))
+        self._set_tag(xaf, tag_name, value)
+
+    def _get_original_basename_tag_name(self):
+        return self._get_tag_name(
+            "original_basename",
+            force_plugin_name="core",
+            counter_str_value="first",
+        )
+
+    def _get_original_uid_tag_name(self):
+        return self._get_tag_name(
+            "original_uid", force_plugin_name="core", counter_str_value="first"
+        )
+
+    def _get_original_dirname_tag_name(self):
+        return self._get_tag_name(
+            "original_dirname",
+            force_plugin_name="core",
+            counter_str_value="first",
+        )
+
+    def __set_original_basename_if_necessary(self, xaf):
+        if hasattr(xaf, "_original_filepath") and xaf._original_filepath:
+            tag_name = self._get_original_basename_tag_name()
+            if tag_name not in xaf.tags:
+                original_basename = str(
+                    os.path.basename(xaf._original_filepath)
+                )
+                self._set_tag(xaf, tag_name, original_basename)
+
+    def __set_original_uid_if_necessary(self, xaf):
+        tag_name = self._get_original_uid_tag_name()
+        if tag_name not in xaf.tags:
+            original_uid = get_unique_hexa_identifier()
+            self._set_tag(xaf, tag_name, original_uid)
+
+    def __set_original_dirname_if_necessary(self, xaf):
+        if hasattr(xaf, "_original_filepath") and xaf._original_filepath:
+            tag_name = self._get_original_dirname_tag_name()
+            if tag_name not in xaf.tags:
+                dirname = os.path.dirname(xaf._original_filepath)
+                original_dirname = str(os.path.basename(dirname))
+                self._set_tag(xaf, tag_name, original_dirname)
+
+    def _set_after_tags(self, xaf, process_status):
+        self.set_tag(
+            xaf,
+            "exit_step",
+            _get_current_utc_datetime_with_ms(),
+            add_latest=False,
+        )
+        if process_status:
+            self.set_tag(xaf, "process_status", "ok", add_latest=False)
+        else:
+            self.set_tag(xaf, "process_status", "nok", add_latest=False)
+
+    def _set_before_tags(self, xaf):
+        current = _get_current_utc_datetime_with_ms()
+        self.__increment_and_set_counter_tag_value(xaf)
+        self.set_tag(xaf, "enter_step", current, add_latest=False)
+        self.__set_original_basename_if_necessary(xaf)
+        self.__set_original_uid_if_necessary(xaf)
+        self.__set_original_dirname_if_necessary(xaf)

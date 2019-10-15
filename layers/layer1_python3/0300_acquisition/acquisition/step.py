@@ -5,17 +5,13 @@ import redis
 import json
 import datetime
 import time
-import six
 import signal
 from acquisition.base import AcquisitionBase
 from mfutil import mkdir_p_or_die, get_unique_hexa_identifier
 from mfutil import get_utc_unix_timestamp
-from mfutil.plugins import MFUtilPluginBaseNotInitialized
-from mfutil.plugins import get_installed_plugins
 from acquisition.utils import (
     get_plugin_step_directory_path,
     MFMODULE_RUNTIME_HOME,
-    _get_current_utc_datetime_with_ms,
     _get_or_make_trash_dir,
 )
 from acquisition.stats import get_stats_client
@@ -23,13 +19,6 @@ from acquisition.stats import get_stats_client
 DEFAULT_STEP_LIMIT = 1000
 DEFAULT_REDIS_HOST = "127.0.0.1"
 DEFAULT_REDIS_PORT = int(os.environ.get("MFDATA_REDIS_PORT", "1234"))
-DEBUG_PLUGIN_NAME = "debug"
-try:
-    DEBUG_PLUGIN_INSTALLED = DEBUG_PLUGIN_NAME in [
-        x["name"] for x in get_installed_plugins()
-    ]
-except MFUtilPluginBaseNotInitialized:
-    DEBUG_PLUGIN_INSTALLED = False
 
 
 class AcquisitionStep(AcquisitionBase):
@@ -61,7 +50,6 @@ class AcquisitionStep(AcquisitionBase):
     failure_policy_move_keep_tags_suffix = None
     step_limit = DEFAULT_STEP_LIMIT
     __last_ping = None
-    _shadow = False
     _debug_mode = False
 
     def _init(self):
@@ -197,11 +185,6 @@ class AcquisitionStep(AcquisitionBase):
                 xaf.dump_tags_on_logger(logger, 10)  # DEBUG
         return after_status
 
-    def _conditional_copy_to_debug_plugin(self, xaf):
-        if DEBUG_PLUGIN_INSTALLED:
-            if not self._shadow:
-                self.copy_to_plugin_step(xaf, DEBUG_PLUGIN_NAME, "main")
-
     def _before(self, xaf):
         tmp_filepath = self.get_tmp_filepath()
         self.debug("Move %s to %s", xaf.filepath, tmp_filepath)
@@ -216,7 +199,6 @@ class AcquisitionStep(AcquisitionBase):
             return False
         xaf._before_process_filepath = xaf.filepath
         self._set_before_tags(xaf)
-        self._conditional_copy_to_debug_plugin(xaf)
         if self._get_counter_tag_value(xaf) > self.step_limit:
             self.warning(
                 "step_value bigger than step_limit [%i] => "
@@ -224,28 +206,6 @@ class AcquisitionStep(AcquisitionBase):
             )
             return False
         return True
-
-    def _set_after_tags(self, xaf, process_status):
-        if not self._shadow:
-            self.set_tag(
-                xaf,
-                "exit_step",
-                _get_current_utc_datetime_with_ms(),
-                add_latest=False,
-            )
-            if process_status:
-                self.set_tag(xaf, "process_status", "ok", add_latest=False)
-            else:
-                self.set_tag(xaf, "process_status", "nok", add_latest=False)
-
-    def _set_before_tags(self, xaf):
-        if not self._shadow:
-            current = _get_current_utc_datetime_with_ms()
-            self.__increment_and_set_counter_tag_value(xaf)
-            self.set_tag(xaf, "enter_step", current, add_latest=False)
-            self.__set_original_basename_if_necessary(xaf)
-            self.__set_original_uid_if_necessary(xaf)
-            self.__set_original_dirname_if_necessary(xaf)
 
     def _trash(self, xaf):
         if self.failure_policy == "delete":
@@ -504,58 +464,6 @@ class AcquisitionStep(AcquisitionBase):
             )
         self._destroy()
 
-    def _get_counter_tag_value(self, xaf, not_found_value="0"):
-        tag_name = self._get_tag_name("step_counter", force_plugin_name="core")
-        return int(xaf.tags.get(tag_name, not_found_value))
-
-    def __increment_and_set_counter_tag_value(self, xaf):
-        tag_name = self._get_tag_name("step_counter", force_plugin_name="core")
-        counter_value = self._get_counter_tag_value(xaf, not_found_value="-1")
-        value = six.b("%i" % (counter_value + 1))
-        self._set_tag(xaf, tag_name, value)
-
-    def __get_original_basename_tag_name(self):
-        return self._get_tag_name(
-            "original_basename",
-            force_plugin_name="core",
-            counter_str_value="first",
-        )
-
-    def __get_original_uid_tag_name(self):
-        return self._get_tag_name(
-            "original_uid", force_plugin_name="core", counter_str_value="first"
-        )
-
-    def __get_original_dirname_tag_name(self):
-        return self._get_tag_name(
-            "original_dirname",
-            force_plugin_name="core",
-            counter_str_value="first",
-        )
-
-    def __set_original_basename_if_necessary(self, xaf):
-        if hasattr(xaf, "_original_filepath") and xaf._original_filepath:
-            tag_name = self.__get_original_basename_tag_name()
-            if tag_name not in xaf.tags:
-                original_basename = str(
-                    os.path.basename(xaf._original_filepath)
-                )
-                self._set_tag(xaf, tag_name, original_basename)
-
-    def __set_original_uid_if_necessary(self, xaf):
-        tag_name = self.__get_original_uid_tag_name()
-        if tag_name not in xaf.tags:
-            original_uid = get_unique_hexa_identifier()
-            self._set_tag(xaf, tag_name, original_uid)
-
-    def __set_original_dirname_if_necessary(self, xaf):
-        if hasattr(xaf, "_original_filepath") and xaf._original_filepath:
-            tag_name = self.__get_original_dirname_tag_name()
-            if tag_name not in xaf.tags:
-                dirname = os.path.dirname(xaf._original_filepath)
-                original_dirname = str(os.path.basename(dirname))
-                self._set_tag(xaf, tag_name, original_dirname)
-
     def get_original_basename(self, xaf):
         """Return the original basename of the file.
 
@@ -569,7 +477,7 @@ class AcquisitionStep(AcquisitionBase):
             string: original basename.
 
         """
-        tag_name = self.__get_original_basename_tag_name()
+        tag_name = self._get_original_basename_tag_name()
         return xaf.tags.get(tag_name, b"unknown").decode("utf8")
 
     def get_original_uid(self, xaf):
@@ -585,7 +493,7 @@ class AcquisitionStep(AcquisitionBase):
             string: original uid.
 
         """
-        tag_name = self.__get_original_uid_tag_name()
+        tag_name = self._get_original_uid_tag_name()
         return xaf.tags.get(tag_name, b"unknown").decode("utf8")
 
     def get_original_dirname(self, xaf):
@@ -601,7 +509,7 @@ class AcquisitionStep(AcquisitionBase):
             string: original dirname.
 
         """
-        tag_name = self.__get_original_dirname_tag_name()
+        tag_name = self._get_original_dirname_tag_name()
         return xaf.tags.get(tag_name, b"unknown").decode("utf8")
 
     def __sigterm_handler(self, *args):

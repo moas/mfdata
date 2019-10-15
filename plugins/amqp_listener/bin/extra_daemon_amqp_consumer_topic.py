@@ -59,7 +59,6 @@ class ExtraDaemonAmqpConsumerTopic(ExtraDaemonAmqpListener):
             )
             self.info(
                 " [*] Waiting for %s on queue %s and topics %s."
-                "To exit press CTRL+C"
                 % (
                     self.args.subscription_exchange,
                     self.subscription_queue,

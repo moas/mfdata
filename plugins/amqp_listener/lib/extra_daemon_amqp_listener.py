@@ -107,8 +107,8 @@ class ExtraDaemonAmqpListener(AcquisitionListener):
         filename = os.path.join(self.args.dest_dir, basename)
         tmp_filename = ".".join((filename, self.args.tmp_suffix))
         self.debug("Created tmp file name : %s" % tmp_filename)
-        with open(tmp_filename, "w") as fichier:
-            fichier.write(str(body))
+        with open(tmp_filename, "wb") as f:
+            f.write(body)
         xaf = xattrfile.XattrFile(tmp_filename)
         self.set_tag(
             xaf,
@@ -130,9 +130,11 @@ class ExtraDaemonAmqpListener(AcquisitionListener):
             add_extra_tags_func(
                 self, xaf, _unused_channel, basic_deliver, properties, body
             )
+        self._set_before_tags(xaf)
+        self._set_after_tags(xaf, True)
         xaf.rename(filename)
         self.debug("Created file name : %s" % filename)
         self.info(
-            "Received message %s from %s : %s"
-            % (basic_deliver.delivery_tag, properties.app_id, body)
+            "Received message %s from %s (size: %i)"
+            % (basic_deliver.delivery_tag, properties.app_id, len(body))
         )
